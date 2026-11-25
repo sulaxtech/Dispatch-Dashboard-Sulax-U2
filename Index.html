@@ -1,0 +1,800 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Dispatch Dashboard Sulax U2</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <style>
+    body {
+      margin:0;
+      font-family:Arial;
+      background:#0b0f1a;
+      color:white;
+    }
+
+    .header {
+      display:flex;
+      justify-content:space-between;
+      padding:10px 20px;
+      background:#111827;
+      font-size:22px;
+    }
+
+    .tiles {
+      display:grid;
+      grid-template-columns:repeat(4,1fr);
+      gap:10px;
+      padding:10px;
+    }
+
+    .tile {
+      padding:20px;
+      border-radius:12px;
+      text-align:center;
+      background:linear-gradient(135deg,#1f2937,#111827);
+      font-size:18px;
+    }
+
+    .controls {
+      text-align:center;
+      padding:10px;
+    }
+
+    .controls button,
+    .controls input {
+      padding:8px;
+      margin:5px;
+      border:none;
+      border-radius:6px;
+    }
+
+    .page {
+      display:none;
+      padding:15px;
+    }
+
+    .active {
+      display:block;
+    }
+
+    table {
+      width:100%;
+      border-collapse:collapse;
+      font-size:13px;
+    }
+
+    th,td {
+      border:1px solid #374151;
+      padding:6px;
+      text-align:center;
+    }
+
+    th {
+      background:#1f2937;
+    }
+
+    .ok {
+      background:#065f46;
+    }
+
+    .bad {
+      background:#7f1d1d;
+      animation:blink 1s infinite;
+    }
+
+    @keyframes blink {
+      50% { opacity:0.4; }
+    }
+
+    .chart-row {
+      display:flex;
+      gap:20px;
+      margin-top:20px;
+    }
+
+    .chart-box {
+      flex:1;
+      height:420px;
+      background:#111827;
+      padding:15px;
+      border-radius:12px;
+    }
+
+    canvas {
+      width:100% !important;
+      height:100% !important;
+    }
+
+    .nodata {
+      text-align:center;
+      font-size:22px;
+      padding:40px;
+      color:#f87171;
+    }
+  </style>
+</head>
+
+<body>
+
+<div class="header">
+  <div>📊 DISPATCH DASHBOARD SULAX U2</div>
+  <div id="clock"></div>
+</div>
+
+<div class="tiles">
+  <div class="tile" id="sch"></div>
+  <div class="tile" id="disp"></div>
+  <div class="tile" id="pending"></div>
+  <div class="tile" id="ach"></div>
+</div>
+
+<div class="controls">
+  <button onclick="prevSlide()">⏮</button>
+  <button onclick="pauseSlide()">⏸</button>
+  <button onclick="playSlide()">▶</button>
+  <button onclick="nextSlide()">⏭</button>
+
+  📅
+  <input type="date" id="datePicker" onchange="applyDateFilter()">
+
+  <button onclick="showToday()">Today</button>
+  <button onclick="showMonthToDate()">UpToDate</button>
+</div>
+
+<div id="pages"></div>
+
+<script>
+
+const url="https://docs.google.com/spreadsheets/d/e/2PACX-1vTbUHI5wjkXOhcPmnfz5PBhg_aLWHqARzFyhYnZKnajvO9gpDFp-G8qd5U-t3lFKEASNb4jPN3gK3HD/pub?output=csv";
+
+let data=[], filtered=[], headers=[];
+let pages=[], current=0, timer;
+
+// ---------- CSV PARSER ----------
+function parseCSV(text){
+
+  const rows=[];
+  let row=[],val='',insideQuote=false;
+
+  for(let c of text){
+
+    if(c === '"'){
+      insideQuote = !insideQuote;
+    }
+
+    else if(c === ',' && !insideQuote){
+      row.push(val);
+      val='';
+    }
+
+    else if(c === '\n' && !insideQuote){
+      row.push(val);
+      rows.push(row);
+      row=[];
+      val='';
+    }
+
+    else{
+      val+=c;
+    }
+  }
+
+  if(val) row.push(val);
+
+  if(row.length) rows.push(row);
+
+  headers = rows[0].map(h => h.trim().toUpperCase());
+
+  return rows.slice(1).map(r=>{
+
+    let o={};
+
+    headers.forEach((h,i)=>{
+      o[h]=(r[i]||"").trim();
+    });
+
+    return o;
+  });
+}
+
+// ---------- LOAD ----------
+function load(){
+
+  fetch(url)
+    .then(r=>r.text())
+    .then(t=>{
+
+      data=parseCSV(t);
+
+      filtered=data;
+
+      build();
+    });
+}
+
+// ---------- DATE FILTER ----------
+function applyDateFilter(){
+
+  let val=document.getElementById("datePicker").value;
+
+  if(!val){
+
+    filtered=data;
+
+  } else {
+
+    let selected=new Date(val);
+
+    filtered=data.filter(r=>{
+
+      let raw=r["SCHEDULE DATE"];
+
+      if(!raw) return false;
+
+      raw=raw.replace(/-/g,"/");
+
+      let p=raw.split("/");
+
+      if(p.length!==3) return false;
+
+      return parseInt(p[0])===selected.getDate() &&
+             parseInt(p[1])-1===selected.getMonth() &&
+             parseInt(p[2])===selected.getFullYear();
+    });
+  }
+
+  build();
+}
+
+// ---------- TODAY ----------
+function showToday(){
+
+  let today = new Date();
+
+  document.getElementById("datePicker").value =
+    today.toISOString().split("T")[0];
+
+  filtered = data.filter(r=>{
+
+    let raw = r["SCHEDULE DATE"];
+
+    if(!raw) return false;
+
+    raw = raw.replace(/-/g,"/");
+
+    let p = raw.split("/");
+
+    if(p.length!==3) return false;
+
+    return parseInt(p[0]) === today.getDate() &&
+           parseInt(p[1])-1 === today.getMonth() &&
+           parseInt(p[2]) === today.getFullYear();
+  });
+
+  build();
+}
+
+// ---------- MONTH TO DATE ----------
+function showMonthToDate(){
+
+  document.getElementById("datePicker").value = "";
+
+  let today = new Date();
+
+  filtered = data.filter(r=>{
+
+    let raw = r["SCHEDULE DATE"];
+
+    if(!raw) return false;
+
+    raw = raw.replace(/-/g,"/");
+
+    let p = raw.split("/");
+
+    if(p.length!==3) return false;
+
+    let rowDate = new Date(
+      parseInt(p[2]),
+      parseInt(p[1])-1,
+      parseInt(p[0])
+    );
+
+    return rowDate.getMonth() === today.getMonth() &&
+           rowDate.getFullYear() === today.getFullYear() &&
+           rowDate <= today;
+  });
+
+  build();
+}
+
+// ---------- BUILD ----------
+function build(){
+
+  document.getElementById("pages").innerHTML="";
+
+  pages=[];
+
+  updateTiles();
+
+  if(filtered.length===0){
+
+    document.getElementById("pages").innerHTML=
+      `<div class="nodata">⚠️ No data for selected date</div>`;
+
+    return;
+  }
+
+  createSlides();
+
+  createFinalChartSlide();
+
+  current=0;
+
+  show(current);
+
+  playSlide();
+}
+
+// ---------- TILES ----------
+function updateTiles(){
+
+  let sch=0;
+  let disp=0;
+
+  filtered.forEach(r=>{
+
+    sch+=+r["SCH QTY"]||0;
+
+    disp+=+(r["DES QTY"]||r["DISP QTY"])||0;
+  });
+
+  document.getElementById("sch").innerText =
+    "Scheduled: "+sch;
+
+  document.getElementById("disp").innerText =
+    "Dispatched: "+disp;
+
+  document.getElementById("pending").innerText =
+    "Pending: "+(sch-disp);
+
+  document.getElementById("ach").innerText =
+    "Ach %: "+(sch?((disp/sch)*100).toFixed(1):0)+"%";
+}
+
+// ---------- TABLE ----------
+function table(rows){
+
+  let html="<table><tr>";
+
+  headers.forEach(h=>{
+    html+=`<th>${h}</th>`;
+  });
+
+  html+="</tr>";
+
+  rows.forEach(r=>{
+
+    let sch=+r["SCH QTY"]||0;
+
+    let disp=+(r["DES QTY"]||r["DISP QTY"])||0;
+
+    let remark=(r["REMARKS"]||"").toUpperCase();
+
+    let cls =
+      (remark==="READY" ||
+       remark==="DISPATCHED" ||
+       sch===disp)
+      ? "ok"
+      : "bad";
+
+    html+=`<tr class="${cls}">`;
+
+    headers.forEach(h=>{
+      html+=`<td>${r[h]||"-"}</td>`;
+    });
+
+    html+="</tr>";
+  });
+
+  return html+"</table>";
+}
+
+// ---------- VALUE LABEL ----------
+function drawValues(chart){
+
+  const ctx=chart.ctx;
+
+  ctx.font="bold 12px Arial";
+
+  ctx.fillStyle="white";
+
+  ctx.textAlign="center";
+
+  chart.data.datasets.forEach((dataset,i)=>{
+
+    chart.getDatasetMeta(i).data.forEach((bar,index)=>{
+
+      ctx.fillText(
+        dataset.data[index],
+        bar.x,
+        bar.y - 5
+      );
+    });
+  });
+}
+
+// ---------- CUSTOMER SLIDES ----------
+function createSlides(){
+
+  let group={};
+
+  filtered.forEach(r=>{
+
+    let c=r["CUSTOMER"]||"Unknown";
+
+    if(!group[c]) group[c]=[];
+
+    group[c].push(r);
+  });
+
+  for(let c in group){
+
+    let rows = group[c];
+
+    let dateValue = rows[0]["SCHEDULE DATE"] || "";
+
+    // =========================
+    // TABLE SLIDE
+    // =========================
+
+    let tableDiv=document.createElement("div");
+
+    tableDiv.className="page";
+
+    tableDiv.innerHTML=`
+
+      <div style="
+        display:flex;
+        justify-content:space-between;
+        align-items:center;
+        margin-bottom:10px;
+      ">
+
+        <h2>${c}</h2>
+
+        <h2>📅 ${dateValue}</h2>
+
+      </div>
+
+    ` + table(rows);
+
+    pages.push(tableDiv);
+
+    document.getElementById("pages").appendChild(tableDiv);
+
+    // =========================
+    // GRAPH DATA
+    // =========================
+
+    let totalQty = 0;
+    let dispatchedQty = 0;
+
+    rows.forEach(r=>{
+
+      totalQty += Number(r["SCH QTY"]) || 0;
+
+      dispatchedQty += Number(r["DES QTY"] || r["DISP QTY"]) || 0;
+    });
+
+    let pendingQty = totalQty - dispatchedQty;
+
+    // =========================
+    // GRAPH SLIDE
+    // =========================
+
+    let chartId =
+      "chart_" + c.replace(/\s+/g,'_');
+
+    let graphDiv=document.createElement("div");
+
+    graphDiv.className="page";
+
+    graphDiv.innerHTML=`
+
+      <h2 style="
+        text-align:center;
+        margin-bottom:20px;
+      ">
+        📊 ${c} ANALYSIS
+      </h2>
+
+      <div class="chart-row">
+
+        <div class="chart-box">
+
+          <canvas id="${chartId}"></canvas>
+
+        </div>
+
+      </div>
+
+    `;
+
+    pages.push(graphDiv);
+
+    document.getElementById("pages").appendChild(graphDiv);
+
+    // =========================
+    // CREATE GRAPH
+    // =========================
+
+    setTimeout(()=>{
+
+      new Chart(document.getElementById(chartId),{
+
+        type:'bar',
+
+        data:{
+
+          labels:[
+            "TOTAL QTY",
+            "DISPATCHED",
+            "PENDING"
+          ],
+
+          datasets:[{
+
+            label:c,
+
+            data:[
+              totalQty,
+              dispatchedQty,
+              pendingQty
+            ],
+
+            backgroundColor:[
+              "#3b82f6",
+              "#22c55e",
+              "#ef4444"
+            ]
+          }]
+        },
+
+        options:{
+
+          responsive:true,
+
+          plugins:{
+
+            title:{
+              display:true,
+              text:c + " DISPATCH STATUS",
+              color:"white"
+            },
+
+            legend:{
+              labels:{
+                color:"white"
+              }
+            }
+          },
+
+          scales:{
+
+            x:{
+              ticks:{
+                color:"white"
+              }
+            },
+
+            y:{
+              ticks:{
+                color:"white"
+              }
+            }
+          },
+
+          animation:{
+            onComplete:function(){
+              drawValues(this);
+            }
+          }
+        }
+      });
+
+    },100);
+  }
+}
+
+// ---------- FINAL CHART ----------
+function createFinalChartSlide(){
+
+  let div=document.createElement("div");
+
+  div.className="page";
+
+  div.innerHTML=`
+
+    <h2 style="text-align:center;">
+      📊 ALL CUSTOMER ANALYSIS
+    </h2>
+
+    <div class="chart-row">
+
+      <div class="chart-box">
+
+        <canvas id="allCustomerChart"></canvas>
+
+      </div>
+
+    </div>
+
+  `;
+
+  pages.push(div);
+
+  document.getElementById("pages").appendChild(div);
+
+  let customers={};
+
+  filtered.forEach(r=>{
+
+    let c = r["CUSTOMER"] || "Unknown";
+
+    let sch = Number(r["SCH QTY"]) || 0;
+
+    let disp = Number(r["DES QTY"] || r["DISP QTY"]) || 0;
+
+    if(!customers[c]){
+
+      customers[c]={
+        total:0,
+        disp:0
+      };
+    }
+
+    customers[c].total += sch;
+
+    customers[c].disp += disp;
+  });
+
+  let labels = Object.keys(customers);
+
+  let totalData = labels.map(c=>customers[c].total);
+
+  let dispData = labels.map(c=>customers[c].disp);
+
+  let pendingData = labels.map(
+    c=>customers[c].total - customers[c].disp
+  );
+
+  setTimeout(()=>{
+
+    new Chart(document.getElementById("allCustomerChart"),{
+
+      type:'bar',
+
+      data:{
+
+        labels:labels,
+
+        datasets:[
+
+          {
+            label:"TOTAL",
+            data:totalData,
+            backgroundColor:"#3b82f6"
+          },
+
+          {
+            label:"DISPATCHED",
+            data:dispData,
+            backgroundColor:"#22c55e"
+          },
+
+          {
+            label:"PENDING",
+            data:pendingData,
+            backgroundColor:"#ef4444"
+          }
+        ]
+      },
+
+      options:{
+
+        responsive:true,
+
+        plugins:{
+
+          title:{
+            display:true,
+            text:"ALL CUSTOMER STATUS",
+            color:"white"
+          },
+
+          legend:{
+            labels:{
+              color:"white"
+            }
+          }
+        },
+
+        scales:{
+
+          x:{
+            ticks:{
+              color:"white"
+            }
+          },
+
+          y:{
+            ticks:{
+              color:"white"
+            }
+          }
+        },
+
+        animation:{
+          onComplete:function(){
+            drawValues(this);
+          }
+        }
+      }
+    });
+
+  },100);
+}
+
+// ---------- SLIDES ----------
+function show(i){
+
+  pages.forEach(p=>{
+    p.classList.remove("active");
+  });
+
+  if(pages[i]){
+    pages[i].classList.add("active");
+  }
+}
+
+function nextSlide(){
+
+  current=(current+1)%pages.length;
+
+  show(current);
+}
+
+function prevSlide(){
+
+  current=(current-1+pages.length)%pages.length;
+
+  show(current);
+}
+
+function playSlide(){
+
+  clearInterval(timer);
+
+  timer=setInterval(nextSlide,10000);
+}
+
+function pauseSlide(){
+
+  clearInterval(timer);
+}
+
+// ---------- CLOCK ----------
+setInterval(()=>{
+
+  document.getElementById("clock").innerText =
+    new Date().toLocaleString();
+
+},1000);
+
+// ---------- START ----------
+load();
+
+</script>
+
+</body>
+</html>
