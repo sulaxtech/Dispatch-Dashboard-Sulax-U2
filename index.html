@@ -94,6 +94,7 @@ const SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTbUHI5wjkXOh
 const REFRESH_MS = 5 * 60 * 1000;   // reload sheet every 5 minutes
 const SLIDE_MS   = 10 * 1000;       // slide rotation
 const COL = { total:"#3b82f6", disp:"#22c55e", pending:"#ef4444" };
+const BAR_MAX_PX = 60;              // maximum bar width in pixels (smaller = thinner)
 
 // ============================================================
 // STATE
@@ -344,9 +345,17 @@ function barChart(canvasId, labels, datasets, title) {
   }
   const canvas = $(canvasId);
   if (!canvas) return;
+  // Thinner bars: capped width and a gap between bars
+  const thinDatasets = datasets.map(d => ({
+    barPercentage: 0.6,
+    categoryPercentage: 0.6,
+    maxBarThickness: BAR_MAX_PX,
+    ...d
+  }));
+
   const chart = new Chart(canvas, {
     type: "bar",
-    data: { labels, datasets },
+    data: { labels, datasets: thinDatasets },
     plugins: [valueLabels],
     options: {
       responsive: true,
@@ -466,7 +475,7 @@ function build() {
   createSlides(host);
   createFinalChartSlide(host);
   show(current);
-  playSlide();
+  if (!paused) playSlide();
 }
 
 // ============================================================
